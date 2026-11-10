@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thợ Săn Đại Dương - Game Câu Cá</title>
+    <style>
+        :root { --bg: #1e3c72; --ui: #2a5298; --text: #fff; --gold: #ffd700; --red: #ff4c4c; --green: #4caf50; }
+        body { 
+            margin: 0; background: #0f2027; color: var(--text); 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            display: flex; flex-direction: column; align-items: center; user-select: none;
+            padding: 10px;
+        }
+        
+        h1 { margin: 10px 0; font-size: 28px; text-shadow: 0 0 10px #00d2ff; color: #00d2ff; }
+        .controls-txt { margin: 0 0 15px 0; color: #ccc; text-align: center; font-size: 14px;}
+        
+        .game-container { display: flex; gap: 20px; }
+        
+        #gameCanvas {
+            background: linear-gradient(to bottom, #87CEEB 0%, #87CEEB 35%, #1e3c72 35%, #0f2027 100%);
+            border: 4px solid #333;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+        }
+
+        .panel {
+            background: rgba(42, 82, 152, 0.8); border: 2px solid #00d2ff; border-radius: 10px;
+            padding: 20px; width: 260px; box-shadow: inset 0 0 10px #000;
+        }
+        .stats { margin-bottom: 20px; font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;}
+        .stats span { color: var(--gold); }
+        
+        .upgrade-btn {
+            display: block; width: 100%; padding: 12px; margin-bottom: 15px;
+            background: #1e3c72; color: white; border: 2px solid #00d2ff;
+            border-radius: 8px; cursor: pointer; text-align: left; font-family: inherit; font-size: 15px;
+            transition: 0.2s; font-weight: bold;
+        }
+        .upgrade-btn:hover:not(:disabled) { background: #00d2ff; color: #000; box-shadow: 0 0 10px #00d2ff; }
+        .upgrade-btn:disabled { background: #333; color: #777; border-color: #555; cursor: not-allowed; }
+        .cost { float: right; color: var(--gold); font-weight: bold; }
+        
+        /* Popup kết quả câu cá */
+        #fishPopup {
+            position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85); border: 2px solid var(--gold);
+            padding: 20px; border-radius: 10px; text-align: center; display: none;
+            box-shadow: 0 0 20px var(--gold); pointer-events: none; z-index: 10;
+        }
+        #fishPopup h2 { margin: 0 0 10px 0; color: var(--gold); }
+        
+    </style>
+</head>
+<body>
+
+    <h1>🎣 THỢ SĂN ĐẠI DƯƠNG 🌊</h1>
+    <p class="controls-txt">
+        1. <b>Giữ chuột trái</b> để lấy đà ném mồi. <br> 
+        2. Chờ phao chìm (cá cắn câu). <br> 
+        3. <b>Giữ / Nhả chuột</b> liên tục để giữ lực Căng Dây (Tension) ở mức an toàn (Màu xanh).
+    </p>
+
+    <div class="game-container" style="position: relative;">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div id="fishPopup">
+            <h2>CÁ CẮN CÂU!</h2>
+            <p>Bạn bắt được: <strong id="fishName" style="font-size: 20px; color: #00d2ff;">Cá Chép</strong></p>
+            <p>Giá trị: <span id="fishValue" style="color: var(--gold); font-size: 18px; font-weight: bold;">50$</span></p>
+        </div>
+
+        <div class="panel">
+            <div class="stats">
+                💰 Tiền: <span id="uiGold">0$</span><br>
+                🐟 Đã câu: <span id="uiCaught" style="color: #00d2ff;">0 con</span>
+            </div>
+            
+            <h3 style="border-bottom: 2px solid #00d2ff; padding-bottom: 5px; color: #00d2ff;">Cửa Hàng Ngư Cụ</h3>
+            
+            <button class="upgrade-btn" id="btnRod" onclick="buyUpgrade('rod')">
+                🎣 Cần Câu Xịn <br><small>Dây chắc hơn, dễ kéo cá</small>
+                <span class="cost" id="costRod">50$</span>
+            </button>
+            
+            <button class="upgrade-btn" id="btnBait" onclick="buyUpgrade('bait')">
+                🐛 Mồi Câu Thơm <br><small>Thu hút cá to, cá hiếm</small>
+                <span class="cost" id="costBait">100$</span>
+            </button>
+
+            <div style="margin-top: 20px; font-size: 13px; color: #aaa; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;">
+                <b>Lưu ý khi kéo cá:</b><br>
+                - Đứt dây (Thanh lực đầy 100%)<br>
+                - Cá sổng (Thanh lực tụt 0%)<br>
+                - Giữ lực ở giữa để kéo cá về bờ!
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // -- ÂM THANH --
+    let audioCtx;
+    function initAudio() { if (!audioCtx) audioCtx = new AudioContext(); }
+    
+    function playSound(type) {
+        if (!audioCtx) return;
+        let t = audioCtx.currentTime;
+        let osc = audioCtx.createOscillator();
+        let g = audioCtx.createGain();
+        osc.connect(g); g.connect(audioCtx.destination);
+
+        if (type === 'cast') {
+            osc.type = 'sine'; osc.frequency.setValueAtTime(600, t); osc.frequency.exponentialRampToValueAtTime(100, t + 0.5);
+            g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+            osc.start(t); osc.stop(t + 0.5);
+        } else if (type === 'splash') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, t); osc.frequency.exponentialRampToValueAtTime(50, t + 0.3);
+            g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+            
+            let noise = audioCtx.createOscillator(); noise.type = 'square'; noise.frequency.setValueAtTime(100, t);
+            noise.connect(g); noise.start(t); noise.stop(t + 0.3);
+            osc.start(t); osc.stop(t + 0.3);
+        } else if (type === 'bite') {
+            osc.type = 'square'; osc.frequency.setValueAtTime(800, t); osc.frequency.setValueAtTime(1200, t + 0.1);
+            g.gain.setValueAtTime(0.2, t); g.gain.linearRampToValueAtTime(0, t + 0.2);
+            osc.start(t); osc.stop(t + 0.2);
+        } else if (type === 'reel') {
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(300, t);
+            g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0, t + 0.1);
+            osc.start(t); osc.stop(t + 0.1);
+        } else if (type === 'catch') {
+            osc.type = 'sine'; osc.frequency.setValueAtTime(400, t); osc.frequency.setValueAtTime(600, t + 0.1); osc.frequency.setValueAtTime(800, t + 0.2);
+            g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 0.4);
+            osc.start(t); osc.stop(t + 0.4);
+        } else if (type === 'fail') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, t); osc.frequency.linearRampToValueAtTime(50, t + 0.5);
+            g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+            osc.start(t); osc.stop(t + 0.5);
+        }
+    }
+
+    // -- BIẾN TRẠNG THÁI GAME --
+    // Các trạng thái: IDLE, CASTING, FLYING, FISHING, BITING, REELING
+    let state = 'IDLE'; 
+    let mouse = { x: 0, y: 0, down: false };
+    
+    let gold = 0;
+    let caughtCount = 0;
+    
+    let stats = {
+        rodLevel: 1,  // Cấp cần câu (Giảm lực căng)
+        baitLevel: 1, // Cấp mồi (Thu hút cá xịn)
+    };
+    let costs = { rod: 50, bait: 100 };
+
+    let player = { x: 80, y: 160 };
+    let bobber = { x: 0, y: 0, vx: 0, vy: 0 };
+    
+    let castPower = 0;
+    let biteTimer = 0;
+    let hookedFish = null;
+    
+    // Kéo cá (Reeling)
+    let tension = 50; // 0 (Trùng dây) -> 100 (Đứt dây)
+    let fishDistance = 0; // Khoảng cách cá đến bờ
+    let fishPullPower = 0; // Lực cá giãy
+
+    // Danh sách loại cá
+    const fishTypes = [
+        { name: "Cá Cơm", color: "#ccc", val: 10, pullBase: 0.5, size: 10, rarity: 1 },
+        { name: "Cá Chép", color: "#f39c12", val: 30, pullBase: 1.2, size: 15, rarity: 1 },
+        { name: "Cá Thu Xanh", color: "#3498db", val: 80, pullBase: 2.0, size: 20, rarity: 2 },
+        { name: "Cá Mập Con", color: "#7f8c8d", val: 200, pullBase: 3.5, size: 35, rarity: 3 },
+        { name: "Rồng Biển (Huyền Thoại)", color: "#9b59b6", val: 800, pullBase: 5.5, size: 45, rarity: 4 }
+    ];
+
+    let fishes = [];
+
+    // -- KHỞI TẠO BỂ CÁ --
+    function spawnFish() {
+        if(fishes.length > 8) return;
+        
+        // Xác suất ra cá xịn phụ thuộc vào Mồi câu
+        let rand = Math.random() * 100;
+        let rarityLimit = 1;
+        if (stats.baitLevel == 2) rarityLimit = 2;
+        if (stats.baitLevel == 3) rarityLimit = 3;
+        if (stats.baitLevel >= 4) rarityLimit = 4;
+
+        let available = fishTypes.filter(f => f.rarity <= rarityLimit);
+        // Chọn ngẫu nhiên cá (Thiên về cá thường hơn)
+        let fType = available[Math.floor(Math.pow(Math.random(), 1.5) * available.length)];
+
+        fishes.push({
+            type: fType,
+            x: 850,
+            y: 250 + Math.random() * 300,
+            vx: - (0.5 + Math.random()),
+            targetX: 0, targetY: 0, state: 'SWIM'
+        });
+    }
+
+    // -- SỰ KIỆN MOUSE --
+    canvas.addEventListener('mousedown', () => {
+        initAudio();
+        mouse.down = true;
+        
+        if (state === 'IDLE') {
+            state = 'CASTING';
+            castPower = 0;
+        } else if (state === 'BITING') {
+            // Cá cắn câu -> Giật!
+            state = 'REELING';
+            tension = 50; // Khởi tạo lực căng ở giữa
+            fishDistance = Math.hypot(bobber.x - player.x, bobber.y - player.y);
+            playSound('splash');
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        mouse.down = false;
+        
+        if (state === 'CASTING') {
+            // Ném mồi
+            state = 'FLYING';
+            bobber.x = player.x + 30;
+            bobber.y = player.y - 30;
+            
+            // Tính toán lực ném
+            let angle = -Math.PI / 4; // Ném góc 45 độ
+            let power = 5 + (castPower / 5);
+            bobber.vx = Math.cos(angle) * power;
+            bobber.vy = Math.sin(angle) * power;
+            
+            playSound('cast');
+        }
+    });
+
+    // -- MUA ĐỒ --
+    function buyUpgrade(type) {
+        initAudio();
+        if (gold >= costs[type]) {
+            gold -= costs[type];
+            if (type === 'rod') {
+                stats.rodLevel++;
+                costs.rod = Math.floor(costs.rod * 1.8);
+                document.getElementById('btnRod').innerHTML = `🎣 Cần Câu Cấp ${stats.rodLevel} <br><small>Giảm giật, dây dai hơn</small> <span class="cost">${costs.rod}$</span>`;
+            }
+            if (type === 'bait') {
+                stats.baitLevel++;
+                costs.bait = Math.floor(costs.bait * 2.5);
+                document.getElementById('btnBait').innerHTML = `🐛 Mồi Câu Cấp ${stats.baitLevel} <br><small>Thu hút cá cực hiếm</small> <span class="cost">${costs.bait}$</span>`;
+            }
+            playSound('catch'); // Tiếng tít
+            updateUI();
+        }
+    }
+
+    // -- LOGIC CHÍNH --
+    function update() {
+        // Sinh cá
+        if (Math.random() < 0.01) spawnFish();
+
+        // Di chuyển cá bơi lội
+        for (let i = fishes.length - 1; i >= 0; i--) {
+            let f = fishes[i];
+            
+            if (f.state === 'SWIM') {
+                f.x += f.vx;
+                // Cá vẫy đuôi lên xuống nhẹ
+                f.y += Math.sin(Date.now() / 300) * 0.5;
+                if (f.x < 100) f.vx = Math.abs(f.vx);
+                if (f.x > 900) { fishes.splice(i, 1); continue; }
+                
+                // Nếu đang thả mồi, cá có khả năng ngửi thấy mồi và bơi lại
+                if (state === 'FISHING') {
+                    let dist = Math.hypot(f.x - bobber.x, f.y - (bobber.y + 50));
+                    if (dist < 100 + (stats.baitLevel * 20)) {
+                        f.state = 'ATTRACTED';
+                    }
+                }
+            } 
+            else if (f.state === 'ATTRACTED') {
+                if (state !== 'FISHING') { f.state = 'SWIM'; continue; }
+                
+                // Bơi về phía mồi (Dưới phao 50px)
+                let tx = bobber.x;
+                let ty = bobber.y + 50;
+                let angle = Math.atan2(ty - f.y, tx - f.x);
+                f.x += Math.cos(angle) * 1;
+                f.y += Math.sin(angle) * 1;
+                
+                // Đớp mồi
+                if (Math.hypot(f.x - tx, f.y - ty) < 5) {
+                    state = 'BITING';
+                    hookedFish = f; // Bắt lấy con cá này
+                    biteTimer = 60; // Có 1 giây (~60 frames) để giật
+                    playSound('bite');
+                    f.state = 'HOOKED';
+                }
+            }
+        }
+
+        // Logic Trạng Thái Người Chơi
+        if (state === 'CASTING') {
+            if (mouse.down) castPower = Math.min(castPower + 1.5, 100);
+        } 
+        else if (state === 'FLYING') {
+            bobber.x += bobber.vx;
+            bobber.y += bobber.vy;
+            bobber.vy += 0.3; // Trọng lực
+            
+            if (bobber.y >= 210) { // Chạm mặt nước
+                bobber.y = 210;
+                bobber.vx = 0;
+                bobber.vy = 0;
+                state = 'FISHING';
+                playSound('splash');
+            }
+        } 
+        else if (state === 'FISHING') {
+            // Phao bồng bềnh
+            bobber.y = 210 + Math.sin(Date.now() / 200) * 3;
+        } 
+        else if (state === 'BITING') {
+            // Phao bị giật chìm
+            bobber.y = 220 + Math.random() * 10;
+            biteTimer--;
+            if (biteTimer <= 0) {
+                // Sổng mất
+                state = 'IDLE';
+                hookedFish.state = 'SWIM';
+                hookedFish = null;
+                playSound('fail');
+            }
+        } 
+        else if (state === 'REELING') {
+            // MINI-GAME KÉO CÁ
+            // Lực cá giãy (Phụ thuộc vào loại cá)
+            if (Math.random() < 0.05) {
+                fishPullPower = hookedFish.type.pullBase * (Math.random() + 0.5);
+            }
+            
+            // Độ dai của dây câu (Trừ đi nhờ Cần Câu xịn)
+            let rodAdvantage = (stats.rodLevel - 1) * 0.2; 
+            
+            if (mouse.down) {
+                tension += 0.8 + fishPullPower - rodAdvantage; // Dây căng lên
+                fishDistance -= 1.5; // Kéo cá vào gần
+                if(Date.now() % 200 < 20) playSound('reel');
+            } else {
+                tension -= 1.0; // Nhả dây cho chùng
+                fishDistance += fishPullPower; // Cá bơi ra xa
+            }
+            
+            // Giới hạn Tension
+            tension = Math.max(0, tension);
+            
+            if (tension >= 100) {
+                // ĐỨT DÂY
+                state = 'IDLE';
+                hookedFish.state = 'SWIM';
+                hookedFish = null;
+                playSound('fail');
+                showPopup("ĐỨT DÂY!", "Cá đã sổng mất do kéo quá căng...", "");
+            } 
+            else if (tension <= 0 && !mouse.down && fishPullPower > 1) {
+                // TRÙNG DÂY CÁ SỔNG (Phải cẩn thận không nhả quá đà)
+                state = 'IDLE';
+                hookedFish.state = 'SWIM';
+                hookedFish = null;
+                playSound('fail');
+                showPopup("SỔNG CÁ!", "Dây quá chùng, cá đã nhả mồi...", "");
+            }
+            else if (fishDistance <= 20) {
+                // CÂU THÀNH CÔNG
+                state = 'IDLE';
+                gold += hookedFish.type.val;
+                caughtCount++;
+                playSound('catch');
+                showPopup("BẮT ĐƯỢC!", hookedFish.type.name, hookedFish.type.val + "$");
+                
+                // Xóa cá khỏi mảng
+                fishes = fishes.filter(f => f !== hookedFish);
+                hookedFish = null;
+                updateUI();
+            }
+            
+            // Cập nhật vị trí đồ họa của cá đang dính câu
+            if (hookedFish) {
+                let angle = Math.atan2(player.y - bobber.y, player.x - bobber.x);
+                hookedFish.x = player.x - Math.cos(angle) * fishDistance;
+                hookedFish.y = player.y - Math.sin(angle) * fishDistance + 50; // Ở dưới phao một chút
+                
+                bobber.x = hookedFish.x;
+                bobber.y = hookedFish.y - 20; // Phao bị kéo theo cá
+            }
+        }
+    }
+
+    // -- HIỆN POPUP --
+    function showPopup(title, name, value) {
+        let p = document.getElementById('fishPopup');
+        p.style.display = 'block';
+        p.querySelector('h2').innerText = title;
+        p.querySelector('h2').style.color = title.includes("BẮT") ? "var(--gold)" : "var(--red)";
+        document.getElementById('fishName').innerText = name;
+        document.getElementById('fishValue').innerText = value;
+        
+        setTimeout(() => { p.style.display = 'none'; }, 2000);
+    }
+
+    // -- VẼ ĐỒ HỌA --
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. Mặt nước & Đáy biển
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; // Sóng nước trên mặt
+        ctx.fillRect(0, 210, 800, 2);
+        
+        // 2. Vẽ Mặt trời & Mây
+        ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(700, 80, 40, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath(); ctx.arc(150, 100, 20, 0, Math.PI*2); ctx.arc(180, 90, 25, 0, Math.PI*2); ctx.arc(210, 100, 20, 0, Math.PI*2); ctx.fill();
+
+        // 3. Bến tàu
+        ctx.fillStyle = '#5d4037';
+        ctx.fillRect(0, 180, 120, 30);
+        ctx.fillRect(20, 210, 15, 400); // Cột gỗ
+        ctx.fillRect(80, 210, 15, 400);
+
+        // 4. Vẽ Cá bơi
+        for (let f of fishes) {
+            ctx.fillStyle = f.type.color;
+            ctx.beginPath(); ctx.ellipse(f.x, f.y, f.type.size, f.type.size/2, 0, 0, Math.PI*2); ctx.fill();
+            // Đuôi cá
+            ctx.beginPath();
+            ctx.moveTo(f.x + (f.vx < 0 || f.state === 'HOOKED' ? f.type.size : -f.type.size), f.y);
+            ctx.lineTo(f.x + (f.vx < 0 || f.state === 'HOOKED' ? f.type.size+15 : -f.type.size-15), f.y - 10);
+            ctx.lineTo(f.x + (f.vx < 0 || f.state === 'HOOKED' ? f.type.size+15 : -f.type.size-15), f.y + 10);
+            ctx.fill();
+            
+            // Mắt
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(f.x - (f.vx < 0 || f.state === 'HOOKED' ? f.type.size/2 : -f.type.size/2), f.y - 2, 3, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath(); ctx.arc(f.x - (f.vx < 0 || f.state === 'HOOKED' ? f.type.size/2 + 1 : -f.type.size/2 - 1), f.y - 2, 1.5, 0, Math.PI*2); ctx.fill();
+        }
+
+        // 5. Vẽ Người chơi
+        ctx.fillStyle = '#f1c40f'; // Mũ rơm
+        ctx.beginPath(); ctx.ellipse(player.x, player.y - 20, 25, 8, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(player.x, player.y - 25, 12, 0, Math.PI*2); ctx.fill();
+        
+        ctx.fillStyle = '#e74c3c'; // Áo
+        ctx.fillRect(player.x - 10, player.y - 15, 20, 25);
+        ctx.fillStyle = '#34495e'; // Quần
+        ctx.fillRect(player.x - 10, player.y + 10, 20, 10);
+        
+        // 6. Cần Câu & Dây Cước
+        let rodTipX = player.x + 40;
+        let rodTipY = player.y - 40;
+        
+        ctx.strokeStyle = '#8d6e63'; // Cần gỗ
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(player.x, player.y);
+        
+        if (state === 'CASTING') {
+            rodTipX = player.x - 20; // Ngả ra sau
+            rodTipY = player.y - 50;
+            ctx.lineTo(rodTipX, rodTipY);
+            ctx.stroke();
+            
+            // Thanh lực ném
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; ctx.fillRect(player.x - 30, player.y - 70, 60, 8);
+            ctx.fillStyle = '#00d2ff'; ctx.fillRect(player.x - 30, player.y - 70, 60 * (castPower/100), 8);
+        } else {
+            // Cần câu uốn cong nếu đang kéo cá
+            if (state === 'REELING') {
+                rodTipX = player.x + 30; rodTipY = player.y - 10; // Cần cong xuống
+                ctx.quadraticCurveTo(player.x + 20, player.y - 30, rodTipX, rodTipY);
+            } else {
+                ctx.lineTo(rodTipX, rodTipY); // Cần thẳng
+            }
+            ctx.stroke();
+            
+            // Vẽ Dây cước
+            if (state !== 'IDLE') {
+                ctx.strokeStyle = (state === 'REELING' && tension > 80) ? 'red' : 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(rodTipX, rodTipY);
+                if(state === 'FLYING' || state === 'FISHING' || state === 'BITING' || state === 'REELING') {
+                    ctx.lineTo(bobber.x, bobber.y);
+                }
+                ctx.stroke();
+                
+                // Vẽ Phao
+                ctx.fillStyle = 'red';
+                ctx.beginPath(); ctx.arc(bobber.x, bobber.y, 4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = 'white';
+                ctx.beginPath(); ctx.arc(bobber.x, bobber.y+4, 4, 0, Math.PI*2); ctx.fill();
+                
+                // Dây xuống mồi
+                if (state === 'FISHING' || state === 'BITING') {
+                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                    ctx.beginPath(); ctx.moveTo(bobber.x, bobber.y+8); ctx.lineTo(bobber.x, bobber.y+50); ctx.stroke();
+                    // Mồi
+                    ctx.fillStyle = '#a1887f'; ctx.beginPath(); ctx.arc(bobber.x, bobber.y+50, 3, 0, Math.PI*2); ctx.fill();
+                }
+            }
+        }
+
+        // 7. Giao diện Thanh Lực (Mini-game)
+        if (state === 'REELING') {
+            // Bảng Tension
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(250, 50, 300, 30);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(250, 50, 300, 30);
+            
+            // Chia vạch an toàn
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; ctx.fillRect(250, 50, 30, 30); // Vùng chùng dây
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; ctx.fillRect(520, 50, 30, 30); // Vùng đứt dây
+            
+            // Thanh chạy
+            let barColor = '#00d2ff';
+            if (tension > 85 || tension < 15) barColor = 'red';
+            else if (tension > 70 || tension < 30) barColor = 'yellow';
+            
+            ctx.fillStyle = barColor;
+            let barWidth = (tension / 100) * 300;
+            ctx.fillRect(250, 50, barWidth, 30);
+            
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial';
+            ctx.fillText("LỰC CĂNG DÂY (TENSION)", 300, 40);
+            
+            if(mouse.down) {
+                ctx.fillText("KÉO! 🎣", 370, 70);
+            } else {
+                ctx.fillText("NHẢ...", 370, 70);
+            }
+        }
+        
+        // Hướng dẫn nếu câu dính
+        if (state === 'BITING') {
+            ctx.fillStyle = '#ff4c4c'; ctx.font = 'bold 24px Arial';
+            ctx.fillText("CÁ CẮN CÂU! CLICK NGAY!", 250, 200);
+        }
+    }
+
+    function updateUI() {
+        document.getElementById('uiGold').innerText = gold + "$";
+        document.getElementById('uiCaught').innerText = caughtCount + " con";
+        
+        document.getElementById('btnRod').disabled = (gold < costs.rod);
+        document.getElementById('btnBait').disabled = (gold < costs.bait);
+    }
+
+    // -- VÒNG LẶP --
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    updateUI();
+    loop();
+
+</script>
+</body>
+</html>
